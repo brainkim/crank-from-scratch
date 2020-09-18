@@ -132,7 +132,14 @@ function update(renderer, el) {
   }
 
   const oldChildren = wrap(el._children);
-  const newChildren = wrap(el.props.children);
+  let newChildren;
+  if (typeof el.tag === "function") {
+    newChildren = el.tag(el.props);
+  } else {
+    newChildren = el.props.children;
+  }
+
+  newChildren = wrap(newChildren);
   const children = [];
   const values = [];
   const length = Math.max(oldChildren.length, newChildren.length);
@@ -151,7 +158,9 @@ function update(renderer, el) {
 }
 
 function commit(renderer, el, values) {
-  if (el.tag === Portal) {
+  if (typeof el.tag === "function") {
+    return unwrap(values);
+  } else if (el.tag === Portal) {
     renderer.arrange(el, el.props.root, values);
     return undefined;
   } else if (!el._node) {
