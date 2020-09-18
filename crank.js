@@ -6,6 +6,14 @@ function unwrap(arr) {
   return arr.length <= 1 ? arr[0] : arr;
 }
 
+function arrayify(value) {
+  return value == null
+    ? []
+    : typeof value !== "string" && typeof value[Symbol.iterator] === "function"
+    ? Array.from(value)
+    : [value];
+}
+
 class Element {
   constructor(tag, props) {
     this.tag = tag;
@@ -20,6 +28,8 @@ class Element {
 }
 
 export const Portal = Symbol.for("crank.Portal");
+
+export const Fragment = "";
 
 export function createElement(tag, props, ...children) {
   props = Object.assign({}, props);
@@ -37,9 +47,51 @@ function narrow(value) {
     return undefined;
   } else if (typeof value === "string" || value instanceof Element) {
     return value;
+  } else if (typeof value[Symbol.iterator] === "function") {
+    return createElement(Fragment, null, value);
   }
 
   return value.toString();
+}
+
+function normalize(values) {
+  const values1 = [];
+  let buffer;
+  for (const value of values) {
+    if (!value) {
+      // pass
+    } else if (typeof value === "string") {
+      buffer = (buffer || "") + value;
+    } else if (!Array.isArray(value)) {
+      if (buffer) {
+        values1.push(buffer);
+        buffer = undefined;
+      }
+
+      values1.push(value);
+    } else {
+      for (const value1 of value) {
+        if (!value1) {
+          // pass
+        } else if (typeof value1 === "string") {
+          buffer = (buffer || "") + value1;
+        } else {
+          if (buffer) {
+            values1.push(buffer);
+            buffer = undefined;
+          }
+
+          values1.push(value1);
+        }
+      }
+    }
+  }
+
+  if (buffer) {
+    values1.push(buffer);
+  }
+
+  return values1;
 }
 
 export class Renderer {
@@ -139,13 +191,13 @@ function update(renderer, el) {
     newChildren = el.props.children;
   }
 
-  newChildren = wrap(newChildren);
+  newChildren = arrayify(newChildren);
   const children = [];
   const values = [];
   const length = Math.max(oldChildren.length, newChildren.length);
   for (let i = 0; i < length; i++) {
     const oldChild = oldChildren[i];
-    const newChild = narrow(newChildren[i]);
+    let newChild = narrow(newChildren[i]);
     const [child, value] = diff(renderer, oldChild, newChild);
     children.push(child);
     if (value) {
@@ -154,11 +206,11 @@ function update(renderer, el) {
   }
 
   el._children = unwrap(children);
-  return commit(renderer, el, values);
+  return commit(renderer, el, normalize(values));
 }
 
 function commit(renderer, el, values) {
-  if (typeof el.tag === "function") {
+  if (typeof el.tag === "function" || el.tag === Fragment) {
     return unwrap(values);
   } else if (el.tag === Portal) {
     renderer.arrange(el, el.props.root, values);
