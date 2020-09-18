@@ -14,6 +14,10 @@ function arrayify(value) {
     : [value];
 }
 
+function isIteratorLike(value) {
+  return value != null && typeof value.next === "function";
+}
+
 class Element {
   constructor(tag, props) {
     this.tag = tag;
@@ -21,6 +25,7 @@ class Element {
 
     this._node = undefined;
     this._children = undefined;
+    this._ctx = undefined;
 
     // flags
     this._isMounted = false;
@@ -183,14 +188,19 @@ function update(renderer, el) {
     el = createElement(el, {...el.props});
   }
 
-  const oldChildren = wrap(el._children);
-  let newChildren;
   if (typeof el.tag === "function") {
-    newChildren = el.tag(el.props);
-  } else {
-    newChildren = el.props.children;
+    if (!el._ctx) {
+      el._ctx = new Context(renderer, el);
+    }
+
+    return updateCtx(el._ctx);
   }
 
+  return updateChildren(renderer, el, el.props.children);
+}
+
+function updateChildren(renderer, el, newChildren) {
+  const oldChildren = wrap(el._children);
   newChildren = arrayify(newChildren);
   const children = [];
   const values = [];
@@ -222,4 +232,30 @@ function commit(renderer, el, values) {
   renderer.patch(el, el._node);
   renderer.arrange(el, el._node, values);
   return el._node;
+}
+
+class Context {
+  constructor(renderer, el) {
+    this._renderer = renderer;
+    this._el = el;
+    this._iter = undefined;
+  }
+}
+
+function updateCtx(ctx) {
+  if (!ctx._iter) {
+    const value = ctx._el.tag(ctx._el.props);
+    if (isIteratorLike(value)) {
+      ctx._iter = value;
+    } else {
+      return updateCtxChildren(ctx, value);
+    }
+  }
+
+  const iteration = ctx._iter.next();
+  return updateCtxChildren(ctx, iteration.value);
+}
+
+function updateCtxChildren(ctx, children) {
+  return updateChildren(ctx._renderer, ctx._el, narrow(children));
 }
