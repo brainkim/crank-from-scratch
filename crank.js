@@ -18,6 +18,10 @@ function isIteratorLike(value) {
   return value != null && typeof value.next === "function";
 }
 
+function isPromiseLike(value) {
+  return value != null && typeof value.then === "function";
+}
+
 class Element {
   constructor(tag, props) {
     this.tag = tag;
@@ -136,7 +140,11 @@ export class Renderer {
       this._cache.set(root, portal);
     }
 
-    update(this, portal, portal);
+    const result = update(this, portal, portal);
+    if (isPromiseLike(result)) {
+      return Promise.resolve(result).then(() => getChildValues(portal));
+    }
+
     return getChildValues(portal);
   }
 
@@ -229,7 +237,7 @@ function updateChildren(renderer, host, el, newChildren) {
   const oldChildren = wrap(el._children);
   newChildren = arrayify(newChildren);
   const children = [];
-  const values = [];
+  let values = [];
   const length = Math.max(oldChildren.length, newChildren.length);
   for (let i = 0; i < length; i++) {
     const oldChild = oldChildren[i];
@@ -246,6 +254,18 @@ function updateChildren(renderer, host, el, newChildren) {
   }
 
   el._children = unwrap(children);
+  if (values.some((value) => isPromiseLike(value))) {
+    values = Promise.all(values).finally(() => {
+      for (const oldChild of oldChildren.slice(length)) {
+        if (oldChild instanceof Element) {
+          unmount(renderer, oldChild);
+        }
+      }
+    });
+
+    return values.then((values) => commit(renderer, el, normalize(values)));
+  }
+
   for (const oldChild of oldChildren.slice(length)) {
     if (oldChild instanceof Element) {
       unmount(renderer, oldChild);
@@ -326,6 +346,9 @@ function stepCtx(ctx) {
     const value = ctx._el.tag.call(ctx, ctx._el.props);
     if (isIteratorLike(value)) {
       ctx._iter = value;
+    } else if (isPromiseLike(value)) {
+      return Promise.resolve(value)
+        .then((value) => updateCtxChildren(ctx, value));
     } else {
       return updateCtxChildren(ctx, value);
     }
