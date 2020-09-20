@@ -311,6 +311,8 @@ class Context {
     this._el = el;
     this._iter = undefined;
     this._schedules = new Set();
+    this._inflight = undefined;
+    this._enqueued = undefined;
 
     // flags
     this._isUpdating = false;
@@ -319,7 +321,7 @@ class Context {
   }
 
   refresh() {
-    return stepCtx(this);
+    return runCtx(this);
   }
 
   schedule(callback) {
@@ -364,9 +366,32 @@ function stepCtx(ctx) {
   return updateCtxChildren(ctx, iteration.value);
 }
 
+function advanceCtx(ctx) {
+  ctx._inflight = ctx._enqueued;
+  ctx._enqueued = undefined;
+}
+
+function runCtx(ctx) {
+  if (!ctx._inflight) {
+    let value = stepCtx(ctx);
+    if (isPromiseLike(value)) {
+      value = value.finally(() => advanceCtx(ctx));
+      ctx._inflight = value;
+    }
+
+    return value;
+  } else if (!ctx._enqueued) {
+    ctx._enqueued = ctx._inflight
+      .then(() => stepCtx(ctx))
+      .finally(() => advanceCtx(ctx));
+  }
+
+  return ctx._enqueued;
+}
+
 function updateCtx(ctx) {
   ctx._isUpdating = true;
-  return stepCtx(ctx);
+  return runCtx(ctx);
 }
 
 function updateCtxChildren(ctx, children) {
