@@ -136,7 +136,8 @@ export class Renderer {
       this._cache.set(root, portal);
     }
 
-    return update(this, portal, portal);
+    update(this, portal, portal);
+    return getChildValues(portal);
   }
 
   create(el) {
@@ -289,6 +290,7 @@ class Context {
     this._host = host;
     this._el = el;
     this._iter = undefined;
+    this._schedules = new Set();
 
     // flags
     this._isUpdating = false;
@@ -298,6 +300,10 @@ class Context {
 
   refresh() {
     return stepCtx(this);
+  }
+
+  schedule(callback) {
+    this._schedules.add(callback);
   }
 
   *[Symbol.iterator]() {
@@ -313,9 +319,10 @@ class Context {
 }
 
 function stepCtx(ctx) {
+  let initial = !ctx._iter;
   if (ctx._isDone) {
     return getValue(ctx._el);
-  } else if (!ctx._iter) {
+  } else if (initial) {
     const value = ctx._el.tag.call(ctx, ctx._el.props);
     if (isIteratorLike(value)) {
       ctx._iter = value;
@@ -324,7 +331,8 @@ function stepCtx(ctx) {
     }
   }
 
-  const iteration = ctx._iter.next();
+  const oldValue = initial ? undefined : getValue(ctx._el);
+  const iteration = ctx._iter.next(oldValue);
   ctx._isIterating = false;
   if (iteration.done) {
     ctx._isDone = true;
@@ -351,8 +359,15 @@ function commitCtx(ctx, values) {
     );
   }
 
+  const value = unwrap(values);
+  const schedules = Array.from(ctx._schedules);
+  ctx._schedules.clear();
+  for (const schedule of schedules) {
+    schedule(value);
+  }
+
   ctx._isUpdating = false;
-  return unwrap(values);
+  return value;
 }
 
 function unmountCtx(ctx) {
