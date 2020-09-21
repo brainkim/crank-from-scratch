@@ -311,8 +311,10 @@ class Context {
     this._el = el;
     this._iter = undefined;
     this._schedules = new Set();
-    this._inflight = undefined;
-    this._enqueued = undefined;
+    this._inflightBlock = undefined;
+    this._inflightValue = undefined;
+    this._enqueuedBlock = undefined;
+    this._enqueuedValue = undefined;
 
     // flags
     this._isUpdating = false;
@@ -349,10 +351,13 @@ function stepCtx(ctx) {
     if (isIteratorLike(value)) {
       ctx._iter = value;
     } else if (isPromiseLike(value)) {
-      return Promise.resolve(value)
-        .then((value) => updateCtxChildren(ctx, value));
+      const block = Promise.resolve(value);
+      return [
+        block,
+        block.then((value) => updateCtxChildren(ctx, value)),
+      ];
     } else {
-      return updateCtxChildren(ctx, value);
+      return [undefined, updateCtxChildren(ctx, value)];
     }
   }
 
@@ -363,30 +368,43 @@ function stepCtx(ctx) {
     ctx._isDone = true;
   }
 
-  return updateCtxChildren(ctx, iteration.value);
+  const value = updateCtxChildren(ctx, iteration.value);
+  return [value, value];
 }
 
 function advanceCtx(ctx) {
-  ctx._inflight = ctx._enqueued;
-  ctx._enqueued = undefined;
+  ctx._inflightBlock = ctx._enqueuedBlock;
+  ctx._inflightValue = ctx._enqueuedValue;
+  ctx._enqueuedBlock = undefined;
+  ctx._enqueuedValue = undefined;
 }
 
 function runCtx(ctx) {
-  if (!ctx._inflight) {
-    let value = stepCtx(ctx);
+  if (!ctx._inflightBlock) {
+    let [block, value] = stepCtx(ctx);
+    if (isPromiseLike(block)) {
+      block = block.finally(() => advanceCtx(ctx));
+      ctx._inflightBlock = block;
+    }
+
     if (isPromiseLike(value)) {
-      value = value.finally(() => advanceCtx(ctx));
-      ctx._inflight = value;
+      ctx._inflightValue = value;
     }
 
     return value;
-  } else if (!ctx._enqueued) {
-    ctx._enqueued = ctx._inflight
-      .then(() => stepCtx(ctx))
+  } else if (!ctx._enqueuedBlock) {
+    let resolve;
+    ctx._enqueuedBlock = ctx._inflightBlock
+      .then(() => {
+        const [block, value] = stepCtx(ctx);
+        resolve(value);
+        return block;
+      })
       .finally(() => advanceCtx(ctx));
+    ctx._enqueuedValue = new Promise((resolve1) => (resolve = resolve1));
   }
 
-  return ctx._enqueued;
+  return ctx._enqueuedValue;
 }
 
 function updateCtx(ctx) {
