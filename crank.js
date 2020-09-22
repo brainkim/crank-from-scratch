@@ -325,6 +325,7 @@ class Context {
     this._el = el;
     this._iter = undefined;
     this._schedules = new Set();
+    this._onavailable = undefined;
     this._inflightBlock = undefined;
     this._inflightValue = undefined;
     this._enqueuedBlock = undefined;
@@ -334,9 +335,12 @@ class Context {
     this._isUpdating = false;
     this._isIterating = false;
     this._isDone = false;
+    this._isAvailable = false;
+    this._isAsyncIterator = false;
   }
 
   refresh() {
+    resumeCtx(this);
     return runCtx(this);
   }
 
@@ -353,6 +357,26 @@ class Context {
       this._isIterating = true;
       yield this._el.props;
     }
+  }
+
+  async *[Symbol.asyncIterator]() {
+    do {
+      if (this._isIterating) {
+        throw new Error("Context iterated twice without a yield");
+      }
+
+      this._isIterating = true;
+      if (this._isAvailable) {
+        this._isAvailable = false;
+      } else {
+        await new Promise((resolve) => (this._onavailable = resolve));
+        if (this._unmounted) {
+          break;
+        }
+      }
+
+      yield this._el.props;
+    } while (!this._isUnmounted);
   }
 }
 
@@ -377,6 +401,24 @@ function stepCtx(ctx) {
 
   const oldValue = initial ? undefined : getValue(ctx._el);
   const iteration = ctx._iter.next(oldValue);
+  if (isPromiseLike(iteration)) {
+    if (initial) {
+      ctx._isAsyncIterator = true;
+    }
+
+    const block = iteration;
+    const value = iteration.then((iteration) => {
+      ctx._isIterating = false;
+      if (iteration.done) {
+        ctx._done = true;
+      }
+
+      return updateCtxChildren(ctx, iteration.value);
+    });
+
+    return [block, value];
+  }
+
   ctx._isIterating = false;
   if (iteration.done) {
     ctx._isDone = true;
@@ -391,6 +433,9 @@ function advanceCtx(ctx) {
   ctx._inflightValue = ctx._enqueuedValue;
   ctx._enqueuedBlock = undefined;
   ctx._enqueuedValue = undefined;
+  if (ctx._isAsyncIterator) {
+    runCtx(ctx);
+  }
 }
 
 function runCtx(ctx) {
@@ -406,6 +451,8 @@ function runCtx(ctx) {
     }
 
     return value;
+  } else if (ctx._isAsyncIterator) {
+    return ctx._inflightValue;
   } else if (!ctx._enqueuedBlock) {
     let resolve;
     ctx._enqueuedBlock = ctx._inflightBlock
@@ -421,8 +468,18 @@ function runCtx(ctx) {
   return ctx._enqueuedValue;
 }
 
+function resumeCtx(ctx) {
+  if (ctx._onavailable) {
+    ctx._onavailable();
+    ctx._onavailable = undefined;
+  } else if (!ctx._isAvailable) {
+    ctx._isAvailable = true;
+  }
+}
+
 function updateCtx(ctx) {
   ctx._isUpdating = true;
+  resumeCtx(ctx);
   return runCtx(ctx);
 }
 
@@ -453,6 +510,7 @@ function commitCtx(ctx, values) {
 function unmountCtx(ctx) {
   if (!ctx._isDone) {
     ctx._isDone = true;
+    resumeCtx(ctx);
     if (ctx._iterator && typeof ctx._iterator.return === "function") {
       ctx._iterator.return();
     }
