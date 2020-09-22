@@ -30,6 +30,7 @@ class Element {
     this._node = undefined;
     this._children = undefined;
     this._ctx = undefined;
+    this._onvalues = undefined;
 
     // flags
     this._isMounted = false;
@@ -263,6 +264,14 @@ function updateChildren(renderer, host, el, newChildren) {
       }
     });
 
+    let onvalues;
+    const nextValues = new Promise((resolve) => (onvalues = resolve));
+    values = Promise.race([values, nextValues]);
+    if (el._onvalues) {
+      el._onvalues(values);
+    }
+
+    el._onvalues = onvalues;
     return values.then((values) => commit(renderer, el, normalize(values)));
   }
 
@@ -270,6 +279,11 @@ function updateChildren(renderer, host, el, newChildren) {
     if (oldChild instanceof Element) {
       unmount(renderer, oldChild);
     }
+  }
+
+  if (el._onvalues) {
+    el._onvalues(values);
+    el._onvalues = undefined;
   }
 
   return commit(renderer, el, normalize(values));
