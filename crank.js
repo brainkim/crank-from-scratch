@@ -99,6 +99,29 @@ function normalize(values) {
   return values1;
 }
 
+function getValue(el) {
+  if (el.tag === Portal) {
+    return undefined;
+  } else if (typeof el.tag !== "function" && el.tag !== Fragment) {
+    return el._node;
+  }
+
+  return unwrap(getChildValues(el));
+}
+
+function getChildValues(el) {
+  const values = [];
+  for (const child of wrap(el._children)) {
+    if (typeof child === "string") {
+      values.push(child);
+    } else if (typeof child !== "undefined") {
+      values.push(getValue(child));
+    }
+  }
+
+  return normalize(values);
+}
+
 export class Renderer {
   constructor() {
     this._cache = new WeakMap();
@@ -113,7 +136,7 @@ export class Renderer {
       this._cache.set(root, portal);
     }
 
-    return update(this, portal);
+    return update(this, portal, portal);
   }
 
   create(el) {
@@ -161,7 +184,7 @@ export class Renderer {
   }
 }
 
-function diff(renderer, oldChild, newChild) {
+function diff(renderer, host, oldChild, newChild) {
   if (
     oldChild instanceof Element &&
     newChild instanceof Element &&
@@ -175,7 +198,7 @@ function diff(renderer, oldChild, newChild) {
 
   let value;
   if (newChild instanceof Element) {
-    value = update(renderer, newChild);
+    value = update(renderer, host, newChild);
   } else {
     value = newChild;
   }
@@ -183,23 +206,25 @@ function diff(renderer, oldChild, newChild) {
   return [newChild, value];
 }
 
-function update(renderer, el) {
+function update(renderer, host, el) {
   if (el._isMounted) {
     el = createElement(el, {...el.props});
   }
 
   if (typeof el.tag === "function") {
     if (!el._ctx) {
-      el._ctx = new Context(renderer, el);
+      el._ctx = new Context(renderer, host, el);
     }
 
     return updateCtx(el._ctx);
+  } else if (el.tag !== Fragment) {
+    host = el;
   }
 
-  return updateChildren(renderer, el, el.props.children);
+  return updateChildren(renderer, host, el, el.props.children);
 }
 
-function updateChildren(renderer, el, newChildren) {
+function updateChildren(renderer, host, el, newChildren) {
   const oldChildren = wrap(el._children);
   newChildren = arrayify(newChildren);
   const children = [];
@@ -208,7 +233,7 @@ function updateChildren(renderer, el, newChildren) {
   for (let i = 0; i < length; i++) {
     const oldChild = oldChildren[i];
     let newChild = narrow(newChildren[i]);
-    const [child, value] = diff(renderer, oldChild, newChild);
+    const [child, value] = diff(renderer, host, oldChild, newChild);
     children.push(child);
     if (value) {
       values.push(value);
@@ -220,7 +245,9 @@ function updateChildren(renderer, el, newChildren) {
 }
 
 function commit(renderer, el, values) {
-  if (typeof el.tag === "function" || el.tag === Fragment) {
+  if (typeof el.tag === "function") {
+    return commitCtx(el._ctx, values);
+  } else if (el.tag === Fragment) {
     return unwrap(values);
   } else if (el.tag === Portal) {
     renderer.arrange(el, el.props.root, values);
@@ -235,18 +262,22 @@ function commit(renderer, el, values) {
 }
 
 class Context {
-  constructor(renderer, el) {
+  constructor(renderer, host, el) {
     this._renderer = renderer;
+    this._host = host;
     this._el = el;
     this._iter = undefined;
+
+    // flags
+    this._isUpdating = false;
   }
 
   refresh() {
-    return updateCtx(this);
+    return stepCtx(this);
   }
 }
 
-function updateCtx(ctx) {
+function stepCtx(ctx) {
   if (!ctx._iter) {
     const value = ctx._el.tag.call(ctx, ctx._el.props);
     if (isIteratorLike(value)) {
@@ -260,6 +291,24 @@ function updateCtx(ctx) {
   return updateCtxChildren(ctx, iteration.value);
 }
 
+function updateCtx(ctx) {
+  ctx._isUpdating = true;
+  return stepCtx(ctx);
+}
+
 function updateCtxChildren(ctx, children) {
-  return updateChildren(ctx._renderer, ctx._el, narrow(children));
+  return updateChildren(ctx._renderer, ctx._host, ctx._el, narrow(children));
+}
+
+function commitCtx(ctx, values) {
+  if (!ctx._isUpdating) {
+    ctx._renderer.arrange(
+      ctx._host,
+      ctx._host.tag === Portal ? ctx._host.props.root : ctx._host._node,
+      getChildValues(ctx._host),
+    );
+  }
+
+  ctx._isUpdating = false;
+  return unwrap(values);
 }
