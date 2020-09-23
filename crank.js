@@ -240,11 +240,15 @@ class Context {
     this._el = el;
     this._iter = undefined;
   }
+
+  refresh() {
+    return updateCtx(this);
+  }
 }
 
 function updateCtx(ctx) {
   if (!ctx._iter) {
-    const value = ctx._el.tag(ctx._el.props);
+    const value = ctx._el.tag.call(ctx, ctx._el.props);
     if (isIteratorLike(value)) {
       ctx._iter = value;
     } else {
