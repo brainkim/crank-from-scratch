@@ -234,6 +234,10 @@ function updateChildren(renderer, host, el, newChildren) {
     const oldChild = oldChildren[i];
     let newChild = narrow(newChildren[i]);
     const [child, value] = diff(renderer, host, oldChild, newChild);
+    if (oldChild instanceof Element && child !== oldChild) {
+      unmount(renderer, oldChild);
+    }
+
     children.push(child);
     if (value) {
       values.push(value);
@@ -241,6 +245,12 @@ function updateChildren(renderer, host, el, newChildren) {
   }
 
   el._children = unwrap(children);
+  for (const oldChild of oldChildren.slice(length)) {
+    if (oldChild instanceof Element) {
+      unmount(renderer, oldChild);
+    }
+  }
+
   return commit(renderer, el, normalize(values));
 }
 
@@ -261,6 +271,18 @@ function commit(renderer, el, values) {
   return el._node;
 }
 
+function unmount(renderer, el) {
+  if (typeof el.tag === "function") {
+    unmountCtx(el._ctx);
+  }
+
+  for (const child of wrap(el._children)) {
+    if (child instanceof Element) {
+      unmount(renderer, child);
+    }
+  }
+}
+
 class Context {
   constructor(renderer, host, el) {
     this._renderer = renderer;
@@ -270,6 +292,7 @@ class Context {
 
     // flags
     this._isUpdating = false;
+    this._isDone = false;
   }
 
   refresh() {
@@ -278,7 +301,9 @@ class Context {
 }
 
 function stepCtx(ctx) {
-  if (!ctx._iter) {
+  if (ctx._isDone) {
+    return getValue(ctx._el);
+  } else if (!ctx._iter) {
     const value = ctx._el.tag.call(ctx, ctx._el.props);
     if (isIteratorLike(value)) {
       ctx._iter = value;
@@ -288,6 +313,10 @@ function stepCtx(ctx) {
   }
 
   const iteration = ctx._iter.next();
+  if (iteration.done) {
+    ctx._isDone = true;
+  }
+
   return updateCtxChildren(ctx, iteration.value);
 }
 
@@ -311,4 +340,13 @@ function commitCtx(ctx, values) {
 
   ctx._isUpdating = false;
   return unwrap(values);
+}
+
+function unmountCtx(ctx) {
+  if (!ctx._isDone) {
+    ctx._isDone = true;
+    if (ctx._iterator && typeof ctx._iterator.return === "function") {
+      ctx._iterator.return();
+    }
+  }
 }
