@@ -292,11 +292,23 @@ class Context {
 
     // flags
     this._isUpdating = false;
+    this._isIterating = false;
     this._isDone = false;
   }
 
   refresh() {
     return stepCtx(this);
+  }
+
+  *[Symbol.iterator]() {
+    while (!this._isDone) {
+      if (this._isIterating) {
+        throw new Error("Context iterated twice without a yield");
+      }
+
+      this._isIterating = true;
+      yield this._el.props;
+    }
   }
 }
 
@@ -313,6 +325,7 @@ function stepCtx(ctx) {
   }
 
   const iteration = ctx._iter.next();
+  ctx._isIterating = false;
   if (iteration.done) {
     ctx._isDone = true;
   }
