@@ -31,6 +31,7 @@ class Element {
     this._children = undefined;
     this._ctx = undefined;
     this._onvalues = undefined;
+    this._fallback = undefined;
 
     // flags
     this._isMounted = false;
@@ -105,7 +106,13 @@ function normalize(values) {
 }
 
 function getValue(el) {
-  if (el.tag === Portal) {
+  if (el._fallback) {
+    if (el._fallback instanceof Element) {
+      return getValue(el._fallback);
+    }
+
+    return el._fallback;
+  } else if (el.tag === Portal) {
     return undefined;
   } else if (typeof el.tag !== "function" && el.tag !== Fragment) {
     return el._node;
@@ -208,7 +215,11 @@ function diff(renderer, host, oldChild, newChild) {
 
   let value;
   if (newChild instanceof Element) {
+    const initial = !newChild._isMounted;
     value = update(renderer, host, newChild);
+    if (initial && isPromiseLike(value)) {
+      newChild._fallback = oldChild;
+    }
   } else {
     value = newChild;
   }
@@ -290,6 +301,7 @@ function updateChildren(renderer, host, el, newChildren) {
 }
 
 function commit(renderer, el, values) {
+  el._fallback = undefined;
   if (typeof el.tag === "function") {
     return commitCtx(el._ctx, values);
   } else if (el.tag === Fragment) {
@@ -330,6 +342,7 @@ class Context {
     this._inflightValue = undefined;
     this._enqueuedBlock = undefined;
     this._enqueuedValue = undefined;
+    this._previousValue = undefined;
 
     // flags
     this._isUpdating = false;
@@ -399,7 +412,15 @@ function stepCtx(ctx) {
     }
   }
 
-  const oldValue = initial ? undefined : getValue(ctx._el);
+  let oldValue;
+  if (initial) {
+    // pass
+  } else if (ctx._isAsyncIterator && ctx._previousValue) {
+    oldValue = ctx._previousValue;
+  } else {
+    oldValue = getValue(ctx._el);
+  }
+
   const iteration = ctx._iter.next(oldValue);
   if (isPromiseLike(iteration)) {
     if (initial) {
@@ -448,6 +469,7 @@ function runCtx(ctx) {
 
     if (isPromiseLike(value)) {
       ctx._inflightValue = value;
+      ctx._previousValue = value;
     }
 
     return value;
@@ -459,6 +481,10 @@ function runCtx(ctx) {
       .then(() => {
         const [block, value] = stepCtx(ctx);
         resolve(value);
+        if (isPromiseLike(value)) {
+          ctx._previousValue = value;
+        }
+
         return block;
       })
       .finally(() => advanceCtx(ctx));
@@ -488,6 +514,7 @@ function updateCtxChildren(ctx, children) {
 }
 
 function commitCtx(ctx, values) {
+  ctx._previousValue = undefined;
   if (!ctx._isUpdating) {
     ctx._renderer.arrange(
       ctx._host,
