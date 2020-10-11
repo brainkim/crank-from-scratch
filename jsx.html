@@ -1,0 +1,31 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Crank from Scratch</title>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+Babel.registerPreset("crank", {
+  presets: [
+    [Babel.availablePresets.react, {
+      runtime: "classic",
+      pragma: "createElement",
+      pragmaFrag: "''",
+    }],
+  ],
+});
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="text/babel" data-type="module" data-presets="crank">
+import {createElement, Renderer} from "./crank.js";
+const renderer = new Renderer();
+const app = document.getElementById("app");
+renderer.render(
+  <div>Hello <span style="color: red;">World</span></div>,
+  app,
+);
+  </script>
+</body>
+</html>
